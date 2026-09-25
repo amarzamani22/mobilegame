@@ -3,220 +3,350 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Tilt Ball Game</title>
+    <title>Neon Slice: The Quantum Trail</title>
     <style>
-        /* CSS Styling */
         body {
             margin: 0;
             overflow: hidden;
-            background-color: #2c3e50;
-            color: white;
-            font-family: Arial, sans-serif;
-            touch-action: none; /* Prevents screen scrolling on touch */
+            background-color: #050508; /* Deep space black */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none;
+            color: #fff;
         }
         canvas {
             display: block;
         }
-        #ui-layer {
+        #ui {
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            top: 0; left: 0; width: 100%; height: 100%;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            background: rgba(0, 0, 0, 0.85);
+            background: rgba(5, 5, 8, 0.85);
+            backdrop-filter: blur(5px);
             z-index: 10;
         }
-        button {
-            padding: 15px 40px;
-            font-size: 24px;
-            font-weight: bold;
-            border: none;
-            border-radius: 12px;
-            background-color: #e74c3c;
-            color: white;
-            cursor: pointer;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-            transition: transform 0.1s;
-        }
-        button:active {
-            transform: scale(0.95);
-        }
-        #instructions {
-            margin-top: 20px;
+        h1 {
+            font-size: 40px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            background: linear-gradient(90deg, #00f2fe, #4facfe);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 20px rgba(0, 242, 254, 0.5);
             text-align: center;
-            font-size: 16px;
-            line-height: 1.5;
-            color: #bdc3c7;
+        }
+        p { text-align: center; color: #a0a0b0; max-width: 80%; line-height: 1.6; }
+        .highlight { color: #ff0055; font-weight: bold; }
+        button {
+            margin-top: 30px;
+            padding: 15px 50px;
+            font-size: 20px;
+            font-weight: 900;
+            text-transform: uppercase;
+            border: 2px solid #00f2fe;
+            border-radius: 30px;
+            background: transparent;
+            color: #00f2fe;
+            cursor: pointer;
+            box-shadow: 0 0 15px #00f2fe inset, 0 0 20px #00f2fe;
+            transition: all 0.2s ease-in-out;
+        }
+        button:active { transform: scale(0.9); }
+        #hud {
+            position: absolute; top: 20px; left: 20px;
+            font-size: 24px; font-weight: bold;
+            text-shadow: 0 0 10px #fff;
+            pointer-events: none;
+            z-index: 5;
         }
     </style>
 </head>
 <body>
 
-    <!-- User Interface for Permissions/Start -->
-    <div id="ui-layer">
-        <button id="start-btn">Start Game</button>
-        <div id="instructions">
-            Tap to enable tilt controls.<br>
-            Rotate your phone to move the ball.<br>
-            (Use Arrow Keys if testing on desktop)
-        </div>
+    <div id="hud">Score: <span id="scoreVal">0</span></div>
+
+    <div id="ui">
+        <h1 id="title">Neon Slice</h1>
+        <p id="desc">
+            Tilt your phone (or drag mouse) to move.<br><br>
+            Your movement leaves a <span style="color:#00f2fe;">Quantum Trail</span>.<br>
+            Enemies will chase you. If they touch you, you die.<br>
+            Trick them into touching your <span style="color:#00f2fe;">Trail</span> to <span class="highlight">slice them</span>!
+        </p>
+        <button id="start-btn">Initiate</button>
     </div>
 
-    <!-- The Game Canvas -->
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        // JavaScript Game Logic
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        const uiLayer = document.getElementById('ui-layer');
+        const ui = document.getElementById('ui');
         const startBtn = document.getElementById('start-btn');
+        const scoreEl = document.getElementById('scoreVal');
+        const titleEl = document.getElementById('title');
+        const descEl = document.getElementById('desc');
 
-        // Set canvas to full screen
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
 
-        // Ball properties
-        let ball = {
-            x: canvas.width / 2,
-            y: canvas.height / 2,
-            radius: 25,
-            vx: 0, // velocity X
-            vy: 0, // velocity Y
-            ax: 0, // acceleration X
-            ay: 0, // acceleration Y
-            friction: 0.95, // slows the ball down slightly over time
-            bounce: -0.6 // bounciness off walls
+        let gameActive = false;
+        let score = 0;
+        let time = 0;
+
+        // Player / Core Object
+        let player = {
+            x: canvas.width / 2, y: canvas.height / 2,
+            vx: 0, vy: 0,
+            radius: 10,
+            trail: [] // Stores previous positions to create the "weapon"
         };
 
-        // Track keyboard inputs for desktop fallback
-        const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
+        // Game Entities
+        let enemies = [];
+        let particles = [];
+        let targetX = canvas.width / 2;
+        let targetY = canvas.height / 2;
+        let isMobile = false;
 
-        window.addEventListener('keydown', (e) => { if(keys.hasOwnProperty(e.key)) keys[e.key] = true; });
-        window.addEventListener('keyup', (e) => { if(keys.hasOwnProperty(e.key)) keys[e.key] = false; });
+        // Controls: Tilt
+        window.addEventListener('deviceorientation', (e) => {
+            if (!e.gamma || !e.beta) return;
+            isMobile = true;
+            let tiltX = Math.max(-45, Math.min(45, e.gamma)); 
+            let tiltY = Math.max(-45, Math.min(45, e.beta));
+            
+            player.vx += tiltX * 0.08;
+            player.vy += tiltY * 0.08;
+        });
 
-        // Handle device orientation (tilt)
-        function handleOrientation(event) {
-            // event.gamma is the left-to-right tilt in degrees
-            // event.beta is the front-to-back tilt in degrees
-            let tiltX = event.gamma; 
-            let tiltY = event.beta;
+        // Controls: Mouse/Touch Fallback
+        function updateTarget(x, y) { targetX = x; targetY = y; }
+        window.addEventListener('mousemove', (e) => { if(!isMobile) updateTarget(e.clientX, e.clientY); });
+        window.addEventListener('touchmove', (e) => { 
+            e.preventDefault(); // stop scrolling
+            updateTarget(e.touches[0].clientX, e.touches[0].clientY); 
+        }, {passive: false});
 
-            // Cap the tilt values so the ball doesn't accelerate infinitely fast
-            if (tiltX > 90) tiltX = 90;
-            if (tiltX < -90) tiltX = -90;
-            if (tiltY > 90) tiltY = 90;
-            if (tiltY < -90) tiltY = -90;
-
-            // Convert tilt into acceleration
-            ball.ax = tiltX * 0.05;
-            ball.ay = tiltY * 0.05;
+        function spawnEnemy() {
+            if (!gameActive) return;
+            // Spawn at edges
+            let ex = Math.random() < 0.5 ? (Math.random() < 0.5 ? -30 : canvas.width + 30) : Math.random() * canvas.width;
+            let ey = ex < 0 || ex > canvas.width ? Math.random() * canvas.height : (Math.random() < 0.5 ? -30 : canvas.height + 30);
+            
+            enemies.push({
+                x: ex, y: ey,
+                radius: 12 + Math.random() * 8,
+                speed: 1.5 + Math.random() * (score * 0.05 + 1), // Get faster as score increases
+                angle: 0
+            });
+            
+            // Spawn faster over time
+            let spawnRate = Math.max(400, 2000 - (score * 50));
+            setTimeout(spawnEnemy, spawnRate);
         }
 
-        // Request permission for accelerometer (required for iOS 13+)
-        function initGame() {
-            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                DeviceOrientationEvent.requestPermission()
-                    .then(permissionState => {
-                        if (permissionState === 'granted') {
-                            window.addEventListener('deviceorientation', handleOrientation);
-                        } else {
-                            alert("Permission denied. You can still use arrow keys on a keyboard.");
-                        }
-                    })
-                    .catch(console.error);
-            } else {
-                // Non-iOS 13+ devices
-                window.addEventListener('deviceorientation', handleOrientation);
+        function createExplosion(x, y, color) {
+            for(let i=0; i<25; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 15,
+                    vy: (Math.random() - 0.5) * 15,
+                    life: 1.0,
+                    color: color,
+                    size: Math.random() * 4 + 2
+                });
             }
-            
-            // Hide the UI overlay and start the game loop
-            uiLayer.style.display = 'none';
+        }
+
+        function resetGame() {
+            player.x = canvas.width / 2;
+            player.y = canvas.height / 2;
+            player.vx = 0; player.vy = 0;
+            player.trail = [];
+            enemies = [];
+            particles = [];
+            score = 0;
+            scoreEl.innerText = score;
+            gameActive = true;
+            ui.style.display = 'none';
+            spawnEnemy();
             gameLoop();
         }
 
-        startBtn.addEventListener('click', initGame);
+        startBtn.addEventListener('click', () => {
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission().then(state => {
+                    if(state === 'granted') resetGame();
+                    else resetGame(); // Start anyway with touch controls
+                }).catch(console.error);
+            } else {
+                resetGame();
+            }
+        });
 
-        // Main game loop
+        function gameOver() {
+            gameActive = false;
+            titleEl.innerText = "SYSTEM FAILURE";
+            titleEl.style.background = "linear-gradient(90deg, #ff0055, #ff5555)";
+            titleEl.style.webkitBackgroundClip = "text";
+            descEl.innerHTML = `Final Score: <span class='highlight'>${score}</span><br>Your core was breached.`;
+            startBtn.innerText = "Reboot System";
+            ui.style.display = 'flex';
+        }
+
         function gameLoop() {
-            // 1. Update logic
-            
-            // Apply keyboard fallback acceleration if tilt isn't being used
-            if (keys.ArrowLeft) ball.ax = -2;
-            else if (keys.ArrowRight) ball.ax = 2;
-            else if (ball.ax === -2 || ball.ax === 2) ball.ax = 0; // Reset if keyboard was released
+            if (!gameActive) return;
+            time++;
 
-            if (keys.ArrowUp) ball.ay = -2;
-            else if (keys.ArrowDown) ball.ay = 2;
-            else if (ball.ay === -2 || ball.ay === 2) ball.ay = 0;
+            // MOTION BLUR TRICK: Instead of clearRect, we fill with slight transparency
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = 'rgba(5, 5, 8, 0.2)'; 
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Add acceleration to velocity
-            ball.vx += ball.ax;
-            ball.vy += ball.ay;
-            
-            // Apply friction
-            ball.vx *= ball.friction;
-            ball.vy *= ball.friction;
+            // Turn on additive blending for glowing neon effects
+            ctx.globalCompositeOperation = 'lighter';
 
-            // Add velocity to position
-            ball.x += ball.vx;
-            ball.y += ball.vy;
-
-            // Handle Wall Collisions
-            if (ball.x - ball.radius < 0) {
-                ball.x = ball.radius; // snap back to edge
-                ball.vx *= ball.bounce; // reverse velocity & lose some energy
-            } else if (ball.x + ball.radius > canvas.width) {
-                ball.x = canvas.width - ball.radius;
-                ball.vx *= ball.bounce;
+            // --- 1. Update & Draw Player ---
+            if (!isMobile) {
+                // Mouse/Touch physics (spring towards target)
+                let dx = targetX - player.x;
+                let dy = targetY - player.y;
+                player.vx += dx * 0.005;
+                player.vy += dy * 0.005;
             }
 
-            if (ball.y - ball.radius < 0) {
-                ball.y = ball.radius;
-                ball.vy *= ball.bounce;
-            } else if (ball.y + ball.radius > canvas.height) {
-                ball.y = canvas.height - ball.radius;
-                ball.vy *= ball.bounce;
-            }
+            player.vx *= 0.92; // Friction
+            player.vy *= 0.92;
+            player.x += player.vx;
+            player.y += player.vy;
 
-            // 2. Draw Graphics
-            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear previous frame
-            
-            // Draw a simple grid background
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-            ctx.lineWidth = 1;
-            for(let i = 0; i < canvas.width; i+=50) {
-                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
-            }
-            for(let i = 0; i < canvas.height; i+=50) {
-                ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke();
-            }
+            // Keep in bounds
+            if(player.x < 0) { player.x = 0; player.vx *= -1; }
+            if(player.x > canvas.width) { player.x = canvas.width; player.vx *= -1; }
+            if(player.y < 0) { player.y = 0; player.vy *= -1; }
+            if(player.y > canvas.height) { player.y = canvas.height; player.vy *= -1; }
 
-            // Draw the ball
+            // Dynamic color for player
+            let playerColor = `hsl(${(time * 2) % 360}, 100%, 60%)`;
+
+            // Save position to trail
+            player.trail.push({x: player.x, y: player.y});
+            if(player.trail.length > 40) player.trail.shift(); // Trail length
+
+            // Draw Trail (The Weapon)
             ctx.beginPath();
-            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
-            
-            // Add a radial gradient to make the ball look 3D
-            let gradient = ctx.createRadialGradient(ball.x - 5, ball.y - 5, 2, ball.x, ball.y, ball.radius);
-            gradient.addColorStop(0, '#ff9a9e');
-            gradient.addColorStop(1, '#fecfef');
-            
-            ctx.fillStyle = gradient;
-            ctx.fill();
-            ctx.strokeStyle = '#d4777b';
-            ctx.lineWidth = 2;
+            if(player.trail.length > 0) {
+                ctx.moveTo(player.trail[0].x, player.trail[0].y);
+                for(let i=1; i<player.trail.length; i++) {
+                    ctx.lineTo(player.trail[i].x, player.trail[i].y);
+                }
+            }
+            ctx.strokeStyle = playerColor;
+            ctx.lineWidth = 4;
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = playerColor;
             ctx.stroke();
-            ctx.closePath();
+            ctx.shadowBlur = 0; // Reset shadow
 
-            // Loop the next frame
+            // Draw Player Core
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fillStyle = '#fff';
+            ctx.fill();
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = playerColor;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // --- 2. Update & Draw Enemies ---
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                let e = enemies[i];
+                
+                // Move towards player
+                let dx = player.x - e.x;
+                let dy = player.y - e.y;
+                let distToPlayer = Math.hypot(dx, dy);
+                
+                e.x += (dx / distToPlayer) * e.speed;
+                e.y += (dy / distToPlayer) * e.speed;
+                e.angle += 0.1; // Spin
+
+                // Check collision with Player (Game Over)
+                if (distToPlayer < player.radius + e.radius) {
+                    createExplosion(player.x, player.y, '#ffffff');
+                    gameOver();
+                    return;
+                }
+
+                // Check collision with Player Trail (Slicing logic)
+                let sliced = false;
+                for (let j = 0; j < player.trail.length; j += 2) {
+                    let tx = player.trail[j].x;
+                    let ty = player.trail[j].y;
+                    if (Math.hypot(tx - e.x, ty - e.y) < e.radius + 5) {
+                        sliced = true;
+                        break;
+                    }
+                }
+
+                if (sliced) {
+                    createExplosion(e.x, e.y, '#ff0055');
+                    enemies.splice(i, 1);
+                    score += 10;
+                    scoreEl.innerText = score;
+                    continue; // Skip drawing this enemy since it died
+                }
+
+                // Draw Enemy (Glitchy sharp polygons)
+                ctx.save();
+                ctx.translate(e.x, e.y);
+                ctx.rotate(e.angle);
+                ctx.beginPath();
+                ctx.moveTo(0, -e.radius);
+                ctx.lineTo(e.radius, e.radius);
+                ctx.lineTo(-e.radius, e.radius);
+                ctx.closePath();
+                ctx.strokeStyle = '#ff0055';
+                ctx.lineWidth = 3;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#ff0055';
+                ctx.stroke();
+                
+                // Inner core
+                ctx.beginPath();
+                ctx.arc(0, 0, e.radius/3, 0, Math.PI*2);
+                ctx.fillStyle = '#fff';
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // --- 3. Update & Draw Particles ---
+            for(let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.03; // Fade out
+                
+                if(p.life <= 0) {
+                    particles.splice(i, 1);
+                } else {
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    ctx.fillStyle = p.color;
+                    ctx.globalAlpha = p.life;
+                    ctx.fill();
+                    ctx.globalAlpha = 1.0;
+                }
+            }
+
             requestAnimationFrame(gameLoop);
         }
 
-        // Keep canvas full screen if window is resized
+        // Handle Resize
         window.addEventListener('resize', () => {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
